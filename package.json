@@ -1,0 +1,24 @@
+{
+  "name": "mt-responde",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Consultas por SMS de Neo: formulario con enlace único y respuestas que Neo lee cuando el caso lo necesita.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "demo": "node scripts/demo.js",
+    "alta-centro": "node scripts/alta-centro.js"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.6.0-beta.19"
+  }
+}
