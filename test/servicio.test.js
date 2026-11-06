@@ -99,6 +99,8 @@ describe('crear consultas', () => {
       'plazo de más de 30 días': { plazo: new Date(Date.now() + 31 * 86400000).toISOString() },
       'imagen http': { imagen: 'http://ejemplo.com/a.png' },
       'imagen javascript': { imagen: 'javascript:alert(1)' },
+      'imagen de pregunta http': { preguntas: [{ codigo: 'a', texto: 'A', tipo: 'casilla', imagen: 'http://ejemplo.com/a.png' }] },
+      'imagen de pregunta javascript': { preguntas: [{ codigo: 'a', texto: 'A', tipo: 'casilla', imagen: 'javascript:alert(1)' }] },
       'aviso_url http': { aviso_url: 'http://ejemplo.com' },
       'sin personas': { personas: [] },
       'personas repetidas': { personas: ['ana', 'ana'] },
@@ -185,6 +187,62 @@ describe('formulario', () => {
     const css = (await r.text()).match(/<style>([\s\S]*?)<\/style>/)[1];
     const hash = crypto.createHash('sha256').update(css).digest('base64');
     assert.ok(r.headers.get('content-security-policy').includes(`style-src 'sha256-${hash}'`));
+  });
+
+  test('una pregunta con error lo dice con texto, no solo con el color', async () => {
+    const { enlaces } = await crear();
+    const r = await contestar(enlaces[0].enlace, [['p0', 'si'], ['p1', 'coche']]);
+    assert.equal(r.status, 422);
+    const html = await r.text();
+    assert.equal((html.match(/<p class="aviso-pregunta">Revise esta pregunta\.<\/p>/g) ?? []).length, 1);
+    const antes = await (await fetch(enlaces[0].enlace)).text();
+    assert.ok(!antes.includes('<p class="aviso-pregunta">'));
+  });
+
+  test('explica el asterisco solo si hay preguntas obligatorias', async () => {
+    const conObligatoria = await crear();
+    assert.ok((await (await fetch(conObligatoria.enlaces[0].enlace)).text()).includes('Las preguntas con * son obligatorias.'));
+    const sinObligatoria = await crear(claveA, 'centro-a', {
+      preguntas: [{ codigo: 'a', texto: '¿Viene?', tipo: 'simple', opciones: [{ codigo: 'si', texto: 'Sí' }, { codigo: 'no', texto: 'No' }] }]
+    });
+    assert.ok(!(await (await fetch(sinObligatoria.enlaces[0].enlace)).text()).includes('Las preguntas con *'));
+  });
+
+  test('al tocar la imagen se abre la original, sin pasar el código de la persona', async () => {
+    const url = 'https://ejemplo.com/plano.png?a=1&b=2';
+    const { enlaces } = await crear(claveA, 'centro-a', { imagen: url });
+    const html = await (await fetch(enlaces[0].enlace)).text();
+    const u = 'https://ejemplo.com/plano.png?a=1&amp;b=2';
+    assert.ok(html.includes(`<a href="${u}" rel="noreferrer noopener" target="_blank"><img src="${u}" alt="Abrir la imagen original" referrerpolicy="no-referrer"></a>`));
+  });
+
+  test('la imagen de cada tipo de pregunta sale, y fuera de las opciones', async () => {
+    const opciones = [{ codigo: 'si', texto: 'Sí' }, { codigo: 'no', texto: 'No' }];
+    const { enlaces } = await crear(claveA, 'centro-a', {
+      preguntas: [
+        { codigo: 'a', texto: 'A', tipo: 'simple', imagen: 'https://ejemplo.com/a.png', opciones },
+        { codigo: 'b', texto: 'B', tipo: 'multiple', imagen: 'https://ejemplo.com/b.png', opciones },
+        { codigo: 'c', texto: 'C', tipo: 'casilla', imagen: 'https://ejemplo.com/c.png' }
+      ]
+    });
+    const html = await (await fetch(enlaces[0].enlace)).text();
+    for (const letra of ['a', 'b', 'c']) {
+      const enlace = `<a href="https://ejemplo.com/${letra}.png"`;
+      assert.ok(html.includes(enlace), letra);
+      const antes = html.slice(0, html.indexOf(enlace));
+      assert.ok(antes.lastIndexOf('<label') <= antes.lastIndexOf('</label>'), `${letra}: dentro de una opción`);
+    }
+  });
+
+  test('la nota del plazo se lee bien', async () => {
+    const { enlaces } = await crear();
+    const html = await (await fetch(enlaces[0].enlace)).text();
+    assert.match(html, /Las preguntas con \* son obligatorias\. Puede contestar hasta el \d{1,2} de \S+ de \d{4} a las \d{2}:\d{2}\. Solo podrá contestar una vez\./);
+  });
+
+  test('los controles del navegador siguen el modo oscuro', async () => {
+    const { enlaces } = await crear();
+    assert.match(await (await fetch(enlaces[0].enlace)).text(), /:root\{color-scheme:light dark;/);
   });
 
   test('logo y vista previa genérica, sin el texto de la consulta', async () => {
