@@ -174,6 +174,7 @@ describe('formulario', () => {
     assert.equal(r.headers.get('cache-control'), 'no-store');
     assert.match(r.headers.get('content-security-policy'), /default-src 'none'/);
     assert.match(r.headers.get('content-security-policy'), /form-action 'self'/);
+    assert.match(r.headers.get('content-security-policy'), /img-src https: 'self'/);
     assert.doesNotMatch(r.headers.get('content-security-policy'), /script-src/);
     assert.equal(r.headers.get('x-powered-by'), null);
   });
@@ -184,6 +185,25 @@ describe('formulario', () => {
     const css = (await r.text()).match(/<style>([\s\S]*?)<\/style>/)[1];
     const hash = crypto.createHash('sha256').update(css).digest('base64');
     assert.ok(r.headers.get('content-security-policy').includes(`style-src 'sha256-${hash}'`));
+  });
+
+  test('logo y vista previa genérica, sin el texto de la consulta', async () => {
+    const { enlaces } = await crear(claveA, 'centro-a', { texto: 'Texto reservado de la consulta' });
+    const html = await (await fetch(enlaces[0].enlace)).text();
+    const cabecera = html.slice(0, html.indexOf('</head>'));
+    assert.match(html, /<img src="\/logo\.png" alt="Mission Track Neo"/);
+    assert.ok(cabecera.includes(`<meta property="og:image" content="${srv.base}/vista-previa.png">`));
+    assert.match(cabecera, /<meta property="og:title" content="Mission Track Neo">/);
+    assert.ok(!cabecera.includes('reservado'), 'la vista previa no lleva el texto');
+    assert.ok(html.includes('Texto reservado de la consulta'));
+  });
+
+  test('el logo también sale en los avisos', async () => {
+    const r = await fetch(`${srv.base}/AAAAAAAAAA`);
+    assert.equal(r.status, 404);
+    const html = await r.text();
+    assert.match(html, /<img src="\/logo\.png"/);
+    assert.ok(html.includes(`${srv.base}/vista-previa.png`));
   });
 
   test('escapa los textos del programa', async () => {
@@ -500,6 +520,17 @@ describe('otros', () => {
   test('favicon: no sale como enlace no válido', async () => {
     const r = await fetch(`${srv.base}/favicon.ico`);
     assert.equal(r.status, 204);
+  });
+
+  test('imágenes: PNG, en caché y sin pasar por la ruta de enlaces', async () => {
+    const firma = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    for (const ruta of ['/logo.png', '/vista-previa.png', '/icono.png', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']) {
+      const r = await fetch(`${srv.base}${ruta}`);
+      assert.equal(r.status, 200, ruta);
+      assert.equal(r.headers.get('content-type'), 'image/png', ruta);
+      assert.match(r.headers.get('cache-control'), /public/, ruta);
+      assert.deepEqual(Buffer.from(await r.arrayBuffer()).subarray(0, 4), firma, ruta);
+    }
   });
 
   test('muchos intentos falsos no bloquean a nadie', async () => {

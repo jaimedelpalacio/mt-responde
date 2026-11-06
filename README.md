@@ -23,7 +23,7 @@ npm run demo
 
 ## Despliegue en Render
 
-Web service Node, plan de pago `starter` (el gratuito se duerme y no llegaría a los 5 s de Neo), en Frankfurt, build `npm ci --omit=dev`, start `npm start`, health check `/health`. Postgres `basic_256mb` de 1 GB en Frankfurt (la gratuita caduca a los 30 días). `DATABASE_URL` es la dirección interna de esa BD. `r.missiontrack.eu` se añade como dominio propio con un CNAME en la zona DNS de DHAP.
+Web service Node, plan de pago `starter` (el gratuito se duerme y no llegaría a los 5 s de Neo), en Frankfurt, build `npm ci --omit=dev`, start `npm start`, health check `/health`. Postgres `basic_256mb` de 1 GB en Frankfurt (la gratuita caduca a los 30 días). `DATABASE_URL` es la dirección interna de esa BD. `r.missiontrack.eu` se añade como dominio propio con un CNAME en la zona DNS del dominio. El logo, la imagen de la vista previa y el icono están en `public/`.
 
 ## Alta de un centro
 
