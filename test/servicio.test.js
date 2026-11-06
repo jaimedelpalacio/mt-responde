@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import pg from 'pg';
-import { guardarRespuesta, purgar } from '../lib/db.js';
+import { crearEsquema, guardarRespuesta, purgar } from '../lib/db.js';
+import { IDIOMAS, TEXTOS } from '../lib/textos.js';
 import { altaCentro, arrancarPostgres, arrancarServicio, consultaDePrueba, formulario } from './ayuda.js';
 
 let bd;
@@ -102,6 +103,10 @@ describe('crear consultas', () => {
       'imagen de pregunta http': { preguntas: [{ codigo: 'a', texto: 'A', tipo: 'casilla', imagen: 'http://ejemplo.com/a.png' }] },
       'imagen de pregunta javascript': { preguntas: [{ codigo: 'a', texto: 'A', tipo: 'casilla', imagen: 'javascript:alert(1)' }] },
       'aviso_url http': { aviso_url: 'http://ejemplo.com' },
+      'idioma desconocido': { idioma: 'fr' },
+      'idioma en mayúsculas': { idioma: 'ES' },
+      'idioma que no es texto': { idioma: 1 },
+      'idioma heredado del objeto': { idioma: 'constructor' },
       'sin personas': { personas: [] },
       'personas repetidas': { personas: ['ana', 'ana'] },
       'teléfono como referencia': { personas: ['+34600000000'] },
@@ -234,10 +239,133 @@ describe('formulario', () => {
     }
   });
 
+  const FRASES = {
+    es: { enviar: 'Enviar respuesta', plazo: /Puede contestar hasta el \d{1,2} de \S+ de \d{4}/, varias: 'Puede marcar varias.', error: 'Revise esta pregunta.', hecho: 'Respuesta registrada', cerrado: 'Ya ha contestado', mas: 'Más información', alt: 'Abrir la imagen original' },
+    en: { enviar: 'Send reply', plazo: /You can reply until \d{1,2} [A-Z][a-z]+ \d{4} at \d{2}:\d{2}\. You can only reply once\./, varias: 'You can select more than one.', error: 'Please check this question.', hecho: 'Reply recorded', cerrado: 'Already answered', mas: 'More information', alt: 'Open the original image' },
+    ca: { enviar: 'Enviar la resposta', plazo: /Pot contestar fins (?:al |a l’)\d{1,2} d\S* ?\S* del \d{4}, a (?:les|la) \d{1,2}:\d{2}\. Només podrà contestar una vegada\./, varias: 'En pot marcar diverses.', error: 'Revisi aquesta pregunta.', hecho: 'Resposta registrada', cerrado: 'Ja ha contestat', mas: 'Més informació', alt: 'Obrir la imatge original' }
+  };
+
+  for (const [idioma, f] of Object.entries(FRASES)) {
+    test(`formulario completo en ${idioma}`, async () => {
+      const { enlaces } = await crear(claveA, 'centro-a', { idioma, imagen: 'https://ejemplo.com/a.png', aviso: 'Aviso', aviso_url: 'https://ejemplo.com/' });
+      const html = await (await fetch(enlaces[0].enlace)).text();
+      assert.ok(html.includes(`<html lang="${idioma}">`));
+      assert.ok(html.includes(f.enviar));
+      assert.match(html, f.plazo);
+      assert.ok(html.includes(f.varias));
+      assert.ok(html.includes(f.mas));
+      assert.ok(html.includes(`alt="${f.alt}"`));
+      const conError = await (await contestar(enlaces[0].enlace, [['p1', 'coche']])).text();
+      assert.ok(conError.includes(f.error));
+      const hecho = await contestar(enlaces[0].enlace);
+      assert.equal(hecho.status, 200);
+      assert.ok((await hecho.text()).includes(f.hecho));
+      // Con otro idioma en el navegador manda el que eligió el programa.
+      const otra = await fetch(enlaces[0].enlace, { headers: { 'accept-language': idioma === 'en' ? 'ca' : 'en' } });
+      assert.ok((await otra.text()).includes(f.cerrado));
+    });
+  }
+
+  for (const idioma of IDIOMAS) {
+    const t = TEXTOS[idioma];
+
+    test(`${idioma}: ningún texto fijo queda en otro idioma`, async () => {
+      const opciones = [{ codigo: 'si', texto: 'Sí' }, { codigo: 'no', texto: 'No' }];
+      const { enlaces } = await crear(claveA, 'centro-a', {
+        idioma,
+        preguntas: [
+          { codigo: 'a', texto: 'A', tipo: 'simple', obligatoria: true, imagen: 'https://ejemplo.com/a.png', opciones },
+          { codigo: 'c', texto: 'C', tipo: 'casilla', imagen: 'https://ejemplo.com/c.png' }
+        ]
+      });
+      const r = await contestar(enlaces[0].enlace, [['p1', '1']]);
+      assert.equal(r.status, 422);
+      const html = await r.text();
+      assert.ok(html.includes(`<title>${t.titulo}</title>`));
+      assert.ok(html.includes(`content="${t.vistaPrevia}"`));
+      assert.ok(html.includes(`title="${t.obligatoria}"`));
+      assert.ok(html.includes(t.revisarVarias));
+      assert.ok(html.includes(`${t.asterisco} `));
+      // Las dos imágenes de pregunta, en fieldset y en casilla.
+      assert.equal(html.split(`alt="${t.abrirImagen}"`).length - 1, 2);
+    });
+
+    test(`${idioma}: las pantallas de aviso salen en el idioma de la consulta`, async () => {
+      const otro = idioma === 'en' ? 'ca' : 'en';
+      const { consulta_id, enlaces } = await crear(claveA, 'centro-a', { idioma });
+      await srv.pool.query("UPDATE consultas SET plazo = now() - interval '1 minute' WHERE id = $1", [consulta_id]);
+      const r = await fetch(enlaces[0].enlace, { headers: { 'accept-language': otro } });
+      assert.equal(r.status, 410);
+      const html = await r.text();
+      for (const v of t.avisos.caducada) assert.ok(html.includes(v), v);
+    });
+
+    test(`${idioma}: un fallo al guardar avisa en el idioma de la consulta`, async () => {
+      const otro = idioma === 'en' ? 'ca' : 'en';
+      const { enlaces } = await crear(claveA, 'centro-a', { idioma });
+      await srv.pool.query('ALTER TABLE respuestas RENAME TO respuestas_x');
+      try {
+        const peticion = formulario(RESPUESTA_OK);
+        peticion.headers['accept-language'] = otro;
+        const r = await fetch(enlaces[0].enlace, peticion);
+        assert.equal(r.status, 500);
+        const html = await r.text();
+        for (const v of t.avisos.error) assert.ok(html.includes(v), v);
+      } finally {
+        await srv.pool.query('ALTER TABLE respuestas_x RENAME TO respuestas');
+      }
+    });
+  }
+
+  test('todos los idiomas tienen los mismos textos, y traducidos', () => {
+    const claves = (o) => Object.keys(o).sort();
+    for (const idioma of IDIOMAS) {
+      assert.deepEqual(claves(TEXTOS[idioma]), claves(TEXTOS.es));
+      assert.deepEqual(claves(TEXTOS[idioma].avisos), claves(TEXTOS.es.avisos));
+    }
+    for (const clave of ['enviar', 'plazo', 'asterisco', 'revisarPregunta', 'revisarVarias', 'marcarVarias', 'masInformacion', 'abrirImagen', 'obligatoria']) {
+      const v = (i) => (typeof TEXTOS[i][clave] === 'function' ? TEXTOS[i][clave]('2 x') : TEXTOS[i][clave]);
+      assert.equal(new Set(IDIOMAS.map(v)).size, 3, clave);
+    }
+  });
+
+  test('catalán y español: la fecha del plazo se lee bien en los casos especiales', () => {
+    const { ca, es } = TEXTOS;
+    assert.ok(ca.plazo('1 de novembre del 2026, a les 18:30').includes('fins a l’1 de novembre'));
+    assert.ok(ca.plazo('11 de novembre del 2026, a les 18:30').includes('fins a l’11 de novembre'));
+    assert.ok(ca.plazo('2 de novembre del 2026, a les 18:30').includes('fins al 2 de novembre'));
+    assert.ok(ca.plazo('21 de novembre del 2026, a les 18:30').includes('fins al 21 de novembre'));
+    assert.ok(ca.plazo('2 de novembre del 2026, a les 1:30').includes('a la 1:30'));
+    assert.ok(ca.plazo('2 de novembre del 2026, a les 11:30').includes('a les 11:30'));
+    assert.ok(es.plazo('2 de noviembre de 2026 a las 1:30').includes('a la 1:30'));
+    assert.ok(es.plazo('2 de noviembre de 2026 a las 13:30').includes('a las 13:30'));
+  });
+
+  test('idioma null equivale a no indicarlo', async () => {
+    const { enlaces } = await crear(claveA, 'centro-a', { idioma: null });
+    assert.ok((await (await fetch(enlaces[0].enlace)).text()).includes('<html lang="es">'));
+  });
+
+  test('sin idioma, en español aunque el navegador pida otro', async () => {
+    const { enlaces } = await crear();
+    const html = await (await fetch(enlaces[0].enlace, { headers: { 'accept-language': 'en' } })).text();
+    assert.ok(html.includes('<html lang="es">'));
+    assert.ok(html.includes('Enviar respuesta'));
+  });
+
+  test('un enlace no válido usa el idioma del navegador', async () => {
+    const casos = [['en-GB,en;q=0.9', 'Invalid link', 'en'], ['ca', 'Enllaç no vàlid', 'ca'], ['fr', 'Enlace no válido', 'es'], ['fr,ca;q=0.5,en;q=0.9', 'Invalid link', 'en']];
+    for (const [cabecera, texto, lang] of casos) {
+      const html = await (await fetch(`${srv.base}/AAAAAAAAAA`, { headers: { 'accept-language': cabecera } })).text();
+      assert.ok(html.includes(texto), cabecera);
+      assert.ok(html.includes(`<html lang="${lang}">`), cabecera);
+    }
+  });
+
   test('la nota del plazo se lee bien', async () => {
     const { enlaces } = await crear();
     const html = await (await fetch(enlaces[0].enlace)).text();
-    assert.match(html, /Las preguntas con \* son obligatorias\. Puede contestar hasta el \d{1,2} de \S+ de \d{4} a las \d{2}:\d{2}\. Solo podrá contestar una vez\./);
+    assert.match(html, /Las preguntas con \* son obligatorias\. Puede contestar hasta el \d{1,2} de \S+ de \d{4} a las? \d{1,2}:\d{2}\. Solo podrá contestar una vez\./);
   });
 
   test('los controles del navegador siguen el modo oscuro', async () => {
@@ -589,6 +717,41 @@ describe('otros', () => {
       assert.match(r.headers.get('cache-control'), /public/, ruta);
       assert.deepEqual(Buffer.from(await r.arrayBuffer()).subarray(0, 4), firma, ruta);
     }
+  });
+
+  test('varios arranques a la vez no se interbloquean', async () => {
+    const clientes = await Promise.all(Array.from({ length: 8 }, async () => {
+      const c = new pg.Client({ connectionString: bd.url });
+      await c.connect();
+      return c;
+    }));
+    try {
+      for (let vuelta = 0; vuelta < 15; vuelta++) await Promise.all(clientes.map((c) => crearEsquema(c)));
+    } finally {
+      await Promise.all(clientes.map((c) => c.end()));
+    }
+  });
+
+  test('una lectura abierta en otra sesión no impide arrancar', async () => {
+    const lector = new pg.Client({ connectionString: bd.url });
+    await lector.connect();
+    try {
+      await lector.query('BEGIN');
+      await lector.query('SELECT count(*) FROM consultas');
+      await crearEsquema(srv.pool);
+    } finally {
+      await lector.query('ROLLBACK').catch(() => {});
+      await lector.end();
+    }
+  });
+
+  test('al desplegar sobre una BD anterior, las consultas existentes quedan en español', async () => {
+    const { consulta_id, enlaces } = await crear();
+    await srv.pool.query('ALTER TABLE consultas DROP COLUMN idioma');
+    await crearEsquema(srv.pool);
+    const { rows } = await srv.pool.query('SELECT idioma FROM consultas WHERE id = $1', [consulta_id]);
+    assert.equal(rows[0].idioma, 'es');
+    assert.ok((await (await fetch(enlaces[0].enlace)).text()).includes('Enviar respuesta'));
   });
 
   test('muchos intentos falsos no bloquean a nadie', async () => {

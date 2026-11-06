@@ -49,6 +49,7 @@ Todas las rutas exigen `X-API-Key` y solo dan acceso a los datos de ese centro.
   "aviso": "Texto legal",
   "aviso_url": "https://…",
   "plazo": "2026-11-05T18:00:00+01:00",
+  "idioma": "es",
   "preguntas": [
     { "codigo": "asiste", "texto": "¿Podrá asistir?", "tipo": "simple", "obligatoria": true,
       "imagen": "https://…",
@@ -61,7 +62,7 @@ Todas las rutas exigen `X-API-Key` y solo dan acceso a los datos de ese centro.
 }
 ```
 
-`equipo_id`, `imagen`, `aviso`, `aviso_url` y `obligatoria` son opcionales. Las imágenes van por enlace `https`: el servicio no las guarda y las descarga el móvil de cada persona desde ese servidor, así que el enlace debe seguir vivo hasta el plazo (ojo con los enlaces firmados que caducan) y conviene una imagen apaisada y ligera. Se muestran con 260 px de alto como máximo, y al tocarlas se abre la original. El plazo lleva zona horaria y no puede pasar de 30 días. Las referencias son identificadores: se rechaza lo que parezca un teléfono, incluido un identificador de 9 a 15 dígitos.
+`equipo_id`, `imagen`, `aviso`, `aviso_url`, `idioma` y `obligatoria` son opcionales. `idioma` admite `es`, `en` o `ca` (por defecto, `es`) y traduce los textos fijos del formulario; los de la consulta los escribe el programa. Las pantallas en las que no se conoce la consulta, como un enlace no válido, usan el idioma del navegador. Las imágenes van por enlace `https`: el servicio no las guarda y las descarga el móvil de cada persona desde ese servidor, así que el enlace debe seguir vivo hasta el plazo (ojo con los enlaces firmados que caducan) y conviene una imagen apaisada y ligera. Se muestran con 260 px de alto como máximo, y al tocarlas se abre la original. El plazo lleva zona horaria y no puede pasar de 30 días. Las referencias son identificadores: se rechaza lo que parezca un teléfono, incluido un identificador de 9 a 15 dígitos.
 
 Responde `201` con `{ "consulta_id": "…", "enlaces": [{ "ref": "…", "enlace": "https://…" }] }`. Los enlaces **solo se entregan aquí**: no se pueden volver a pedir.
 
